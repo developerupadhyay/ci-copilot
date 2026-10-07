@@ -1,20 +1,22 @@
 {
-  "name": "prateek-ai-copilot",
+  "name": "ci-copilot",
   "version": "1.0.0",
-  "description": "Undetectable Real-Time AI Interview Copilot HUD with Dual-Channel Audio Transcription",
+  "description": "Career Instructor (CI) - Real-Time AI Interview Copilot HUD",
   "main": "dist-electron/main.js",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build && tsc -p tsconfig.electron.json",
     "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "electron:start": "electron dist-electron/main.js",
     "build:exe": "npm run build && electron-builder --win",
     "build:portable": "npm run build && electron-builder --win portable"
   },
   "build": {
-    "appId": "com.prateek.aicopilot",
-    "productName": "Prateek AI Copilot",
+    "appId": "com.careerinstructor.copilot",
+    "productName": "CI Copilot",
     "directories": {
       "output": "release"
     },
@@ -45,7 +47,7 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Prateek AI Copilot"
+      "shortcutName": "CI Copilot"
     }
   },
   "keywords": [
@@ -74,11 +76,13 @@
     "autoprefixer": "^10.4.20",
     "electron": "^33.2.1",
     "electron-builder": "^26.15.3",
+    "jsdom": "^30.1.2",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.16",
     "typescript": "^5.7.2",
     "vite": "^6.0.1",
     "vite-plugin-electron": "^0.29.0",
-    "vite-plugin-electron-renderer": "^0.14.6"
+    "vite-plugin-electron-renderer": "^0.14.6",
+    "vitest": "^5.0.3"
   }
 }

@@ -51,7 +51,7 @@ const FILLER_PHRASES = new Set([
   'thank you so much',
 ]);
 
-const ENGLISH_QUESTION_STARTERS = [
+const UNIVERSAL_QUESTION_STARTERS = [
   'what',
   'why',
   'how',
@@ -96,44 +96,6 @@ const ENGLISH_QUESTION_STARTERS = [
   'vs',
   'versus',
   'difference',
-  // Android & Kotlin Core Concepts
-  'stateflow',
-  'sharedflow',
-  'recomposition',
-  'coroutines',
-  'jetpack compose',
-  'koin',
-  'hilt',
-  'dagger',
-  'clean architecture',
-  'mvvm',
-  'mvi',
-  'room database',
-  'launchedeffect',
-  'remembersaveable',
-  'viewmodel',
-  'lifecycle',
-  'flow',
-  'livedata',
-  'retrofit',
-  'workmanager',
-  'broadcastreceiver',
-  'service',
-  'intent',
-  'activity',
-  'fragment',
-  'modifier',
-  'side effect',
-  'disposableeffect',
-  'coroutine scope',
-  'dispatchers',
-  'ktor',
-  'unit test',
-  'compose navigation',
-  'navigation component',
-  'paging 3',
-  'data binding',
-  'view binding',
 ];
 
 const HINDI_QUESTION_STARTERS = [
@@ -168,9 +130,9 @@ const HINDI_QUESTION_STARTERS = [
 
 function getQuestionStarters(lang: LanguageMode = 'en'): string[] {
   if (lang === 'en') {
-    return ENGLISH_QUESTION_STARTERS;
+    return UNIVERSAL_QUESTION_STARTERS;
   }
-  return [...ENGLISH_QUESTION_STARTERS, ...HINDI_QUESTION_STARTERS];
+  return [...UNIVERSAL_QUESTION_STARTERS, ...HINDI_QUESTION_STARTERS];
 }
 
 /**
@@ -243,28 +205,27 @@ export function isQuestionOrPrompt(text: string, lang: LanguageMode = 'en'): boo
 
 /**
  * Extracts clean technical question intent from conversational speech
- * (e.g. "Hello Sumit what is Kotlin explain ahdbh etc" -> "what is Kotlin explain")
  */
 export function extractCoreQuestion(rawText: string): string {
   if (!rawText) return '';
   let cleaned = rawText.trim();
 
-  // Strip conversational greeting prefixes like "hello sumit", "hey sumit", "hi", "so basically"
-  cleaned = cleaned.replace(/^(hello|hi|hey|ok|okay|so|yes|yeah|sure)\s+(sumit|candidate|there)?\s*,?\s*/i, '');
-  cleaned = cleaned.replace(/^(can you|could you|would you|please|tell me|tell us)\s+/i, '');
+  // Strip conversational greeting prefixes like "hello", "hey", "hi", "okay so", "so please"
+  cleaned = cleaned.replace(/^(?:hello|hi|hey|okay|ok|so|yes|yeah|sure|candidate|there|,|\s)+\s*/i, '');
+  cleaned = cleaned.replace(/^(?:can you|could you|would you|please)\s+/i, '');
 
-  // Strip trailing vocal filler, slips or mumbling (e.g. "ahdbh", "etc", "um", "uh")
-  cleaned = cleaned.replace(/\s+(ahdbh|adhb|etc|um+|uh+|er+|ah+|blah blah|so on)\b.*$/i, '');
-  cleaned = cleaned.replace(/\s+[a-z]{1,2}$/i, ''); // strip single hanging letters at end
+  // Strip trailing vocal filler, slips or mumbling (e.g. "etc", "um", "uh")
+  cleaned = cleaned.replace(/\s+(etc|um+|uh+|er+|ah+|blah blah|so on)\b.*$/i, '');
+  cleaned = cleaned.replace(/\s+[a-z]{1,2}$/i, '');
 
   return cleaned.trim() || rawText.trim();
 }
 
 /**
- * Fast check if incoming speech chunk contains strong technical interview question intent
+ * Fast check if incoming speech chunk contains question intent
  */
 export function hasLiveQuestionIntent(text: string, lang: LanguageMode = 'en'): boolean {
-  if (!text || text.trim().length < 8) return false;
+  if (!text || text.trim().length < 6) return false;
   const lower = text.toLowerCase();
 
   if (lower.includes('?')) return true;
@@ -281,7 +242,6 @@ export function hasLiveQuestionIntent(text: string, lang: LanguageMode = 'en'): 
 
 /**
  * Stitches together the complete question from recent consecutive speech utterances.
- * Prevents fragmented speech from triggering answers on disconnected trailing pieces.
  */
 export function getFullQuestion(
   role: 'interviewer' | 'candidate' | 'system',
@@ -294,14 +254,12 @@ export function getFullQuestion(
   // Traverse transcripts backward to gather recent utterances from the same speaker (last 9 seconds)
   for (let i = transcripts.length - 1; i >= 0; i--) {
     const entry = transcripts[i];
-    // Stop if the other speaker spoke a substantive statement
     if (entry.role !== role) {
       if (isSubstantiveTurn(entry.text)) {
         break;
       }
       continue;
     }
-    // Stop if older than 9 seconds
     if (now - entry.timestamp > 9000) {
       break;
     }

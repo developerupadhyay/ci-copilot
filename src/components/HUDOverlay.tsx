@@ -1,21 +1,21 @@
 import React, { useState, useEffect } from 'react';
 import {
-  GripHorizontal,
   Settings,
-  Shield,
   EyeOff,
   Minimize2,
   MousePointer,
   Sparkles,
-  Play,
-  Square,
-  Maximize2,
   Camera,
   X,
   FileText,
-  Languages,
-  ChevronsUpDown,
   Smartphone,
+  Mic,
+  MicOff,
+  Volume2,
+  VolumeX,
+  Trash2,
+  Briefcase,
+  RotateCcw,
 } from 'lucide-react';
 import { AudioVisualizer } from './AudioVisualizer';
 import { TranscriptFeed } from './TranscriptFeed';
@@ -23,13 +23,16 @@ import { AnswerPanel } from './AnswerPanel';
 import { SettingsModal } from './SettingsModal';
 import { QALogModal } from './QALogModal';
 import { MobileRemoteModal } from './MobileRemoteModal';
-import { qaLogger } from '../services/logger';
 import {
   TranscriptEntry,
   AISuggestion,
   AppSettings,
   AudioLevels,
   SpeakerRole,
+  CandidatePersona,
+  ConfigStatus,
+  AudioDevice,
+  InterviewSessionConfig,
 } from '../types';
 
 interface HUDOverlayProps {
@@ -42,7 +45,14 @@ interface HUDOverlayProps {
   isMicMuted: boolean;
   isSpeakerMuted: boolean;
   settings: AppSettings;
-  onUpdateSettings: (settings: AppSettings) => void;
+  sessionConfig?: InterviewSessionConfig | null;
+  onEndSession?: () => void;
+  onUpdateSettings: (settings: Partial<AppSettings>) => void;
+  onSelectPersona: (persona: CandidatePersona) => void;
+  configStatus: ConfigStatus;
+  onSaveEnvKeys: (keys: { geminiKey?: string; groqKey?: string }) => Promise<{ success: boolean; error?: string }>;
+  audioDevices: AudioDevice[];
+  loopbackSources: Array<{ id: string; name: string }>;
   onToggleMicMute: () => void;
   onToggleSpeakerMute: () => void;
   onClearTranscripts: () => void;
@@ -50,13 +60,9 @@ interface HUDOverlayProps {
   onCaptureScreen: () => void;
   onStopGenerating: () => void;
   onTogglePinAnswer?: () => void;
-  onStartAudio: () => void;
-  onStopAudio: () => void;
-  sttStatus?: 'connected' | 'connecting' | 'disconnected' | 'error';
-  onSimulateQuestion?: () => void;
-  enterModeEnabled?: boolean;
-  onToggleEnterMode?: () => void;
   onToggleMiniMode?: () => void;
+  onToggleStealth?: () => void;
+  onToggleClickThrough?: () => void;
 }
 
 export const HUDOverlay: React.FC<HUDOverlayProps> = ({
@@ -65,11 +71,17 @@ export const HUDOverlay: React.FC<HUDOverlayProps> = ({
   suggestion,
   isGenerating,
   audioLevels,
-  isAudioCapturing,
   isMicMuted,
   isSpeakerMuted,
   settings,
+  sessionConfig,
+  onEndSession,
   onUpdateSettings,
+  onSelectPersona,
+  configStatus,
+  onSaveEnvKeys,
+  audioDevices,
+  loopbackSources,
   onToggleMicMute,
   onToggleSpeakerMute,
   onClearTranscripts,
@@ -77,385 +89,164 @@ export const HUDOverlay: React.FC<HUDOverlayProps> = ({
   onCaptureScreen,
   onStopGenerating,
   onTogglePinAnswer,
-  onStartAudio,
-  onStopAudio,
-  sttStatus = 'connected',
-  onSimulateQuestion,
-  enterModeEnabled = false,
-  onToggleEnterMode,
   onToggleMiniMode,
+  onToggleStealth,
+  onToggleClickThrough,
 }) => {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isLogsOpen, setIsLogsOpen] = useState(false);
-  const [qaCount, setQaCount] = useState(0);
-  const [isClickThrough, setIsClickThrough] = useState(false);
-  const [isCompactMode, setIsCompactMode] = useState(false);
   const [isMobileModalOpen, setIsMobileModalOpen] = useState(false);
+  const [isClickThrough, setIsClickThrough] = useState(false);
 
-  // Dynamic Auto-Expand Window State (automatically expands window downwards as answer lengthens)
-  const autoExpand = settings.autoExpandWindow ?? true;
-  const BASE_WINDOW_HEIGHT = 520;
-  const MAX_WINDOW_HEIGHT = 860;
-  const resizeTimerRef = React.useRef<any>(null);
-  const lastTargetHeightRef = React.useRef<number>(BASE_WINDOW_HEIGHT);
-
-  const handleContentHeightChange = React.useCallback(
-    (answerContentHeight: number) => {
-      if (!autoExpand) return;
-      if (!window.electronAPI?.setWindowHeight) return;
-
-      if (resizeTimerRef.current) {
-        clearTimeout(resizeTimerRef.current);
-      }
-
-      resizeTimerRef.current = setTimeout(() => {
-        if (!suggestion && !isGenerating) {
-          if (lastTargetHeightRef.current !== BASE_WINDOW_HEIGHT) {
-            lastTargetHeightRef.current = BASE_WINDOW_HEIGHT;
-            console.log('[AutoExpand] Resetting window height to base:', BASE_WINDOW_HEIGHT);
-            window.electronAPI?.setWindowHeight?.(BASE_WINDOW_HEIGHT);
-          }
-          return;
-        }
-
-        // Real UI chrome overhead:
-        // App padding (16px) + Titlebar (42px) + Bottom toolbar (42px) + Answer header (34px) + inner padding & borders (16px)
-        const uiChromeOverhead = 150;
-
-        let transcriptHeight = 0;
-        if (!isCompactMode) {
-          transcriptHeight = transcripts.length === 0 ? 36 : 100;
-        }
-
-        const neededTotal = uiChromeOverhead + transcriptHeight + answerContentHeight;
-        const targetHeight = Math.max(BASE_WINDOW_HEIGHT, Math.min(MAX_WINDOW_HEIGHT, neededTotal));
-
-        if (Math.abs(targetHeight - lastTargetHeightRef.current) >= 6) {
-          lastTargetHeightRef.current = targetHeight;
-          console.log(`[AutoExpand] Resizing window height: ${targetHeight}px (answer: ${answerContentHeight}px, overhead: ${uiChromeOverhead + transcriptHeight}px)`);
-          window.electronAPI?.setWindowHeight?.(targetHeight);
-        }
-      }, 40);
-    },
-    [autoExpand, isCompactMode, suggestion, isGenerating, transcripts.length]
-  );
-
-  // When suggestion is cleared and generation stops, gracefully snap window back to compact base
   useEffect(() => {
-    if (!suggestion && !isGenerating && autoExpand && window.electronAPI?.setWindowHeight) {
-      if (resizeTimerRef.current) clearTimeout(resizeTimerRef.current);
-      if (lastTargetHeightRef.current !== BASE_WINDOW_HEIGHT) {
-        lastTargetHeightRef.current = BASE_WINDOW_HEIGHT;
-        console.log('[AutoExpand] Snapping back to base window height:', BASE_WINDOW_HEIGHT);
-        window.electronAPI?.setWindowHeight?.(BASE_WINDOW_HEIGHT);
-      }
-    }
-  }, [suggestion, isGenerating, autoExpand]);
-
-  // Subscribe to Q&A logger history count
-  useEffect(() => {
-    const unsub = qaLogger.subscribe((history) => {
-      setQaCount(history.length);
-    });
-    return unsub;
+    const unsub = window.electronAPI?.onClickThroughChanged?.((ct) => setIsClickThrough(ct));
+    return () => unsub?.();
   }, []);
 
-  // Listen for global shortcut click-through changes from main process
-  useEffect(() => {
-    if (window.electronAPI?.onClickThroughChanged) {
-      const cleanup = window.electronAPI.onClickThroughChanged((enabled) => {
-        setIsClickThrough(enabled);
-      });
-      return cleanup;
-    }
-  }, []);
-
-  // Handle dynamic mouse event pass-through when hovering over interactive elements vs glass background
-  const handleMouseEnterControls = () => {
-    if (!isClickThrough && window.electronAPI?.setIgnoreMouseEvents) {
-      window.electronAPI.setIgnoreMouseEvents(false);
-    }
-  };
-
-  const handleToggleClickThrough = async () => {
-    if (window.electronAPI?.toggleClickThrough) {
-      const active = await window.electronAPI.toggleClickThrough();
-      setIsClickThrough(active);
-    }
-  };
-
-  const handleMinimize = (e?: React.MouseEvent) => {
-    if (e) {
-      e.stopPropagation();
-      e.preventDefault();
-    }
-    if (onToggleMiniMode) {
-      onToggleMiniMode();
-    } else if (window.electronAPI?.setMiniMode) {
-      window.electronAPI.setMiniMode(true);
-    } else if (window.electronAPI?.minimizeToBackground) {
-      window.electronAPI.minimizeToBackground();
-    } else if (window.electronAPI?.minimizeWindow) {
-      window.electronAPI.minimizeWindow();
-    }
-  };
-
-  const handleClose = (e?: React.MouseEvent) => {
-    if (e) {
-      e.stopPropagation();
-      e.preventDefault();
-    }
-    if (window.electronAPI?.closeWindow) {
-      window.electronAPI.closeWindow();
-    } else {
-      window.close();
-    }
-  };
+  const persona = settings.activePersona;
+  const opacityVal = (settings.opacity ?? 100) / 100;
 
   return (
     <div
-      style={{ opacity: settings.opacity }}
-      onMouseEnter={handleMouseEnterControls}
-      className="h-full w-full flex flex-col rounded-xl overflow-hidden glass-panel border border-white/10 transition-opacity duration-150"
+      className="relative w-full h-full flex flex-col rounded-2xl bg-slate-950 border border-slate-800 shadow-2xl overflow-hidden select-none font-sans text-slate-100 transition-opacity duration-150"
+      style={{ opacity: opacityVal }}
     >
-      {/* ================= TOP TITLE BAR (DRAGGABLE) ================= */}
-      <div className="titlebar-drag flex items-center justify-between px-3 py-2 bg-slate-950/80 border-b border-white/10 select-none">
-        {/* Left Side: Drag Handle & Stealth Indicator */}
-        <div className="flex items-center gap-2">
-          <div className="text-slate-500 hover:text-slate-300 cursor-grab active:cursor-grabbing">
-            <GripHorizontal className="w-4 h-4" />
+      {/* ── TOP DRAGGABLE NAVIGATION BAR ─────────────────────────────────────── */}
+      <div
+        className="flex items-center justify-between px-3.5 py-2 border-b border-slate-800/80 bg-slate-900/90 select-none cursor-move"
+        style={{ WebkitAppRegion: 'drag' } as any}
+      >
+        {/* Left: Brand & Active Persona / Session Chip */}
+        <div className="flex items-center gap-2.5 min-w-0" style={{ WebkitAppRegion: 'no-drag' } as any}>
+          <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-indigo-500/20 border border-indigo-500/30 text-indigo-400">
+            <Sparkles className="w-3.5 h-3.5" />
+            <span className="text-xs font-bold tracking-tight">CI COPILOT</span>
           </div>
 
-          <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-blue-950/80 border border-blue-500/30 text-[10px] font-medium text-blue-300">
-            <Shield className="w-3 h-3 text-blue-400" />
-            <span className="tracking-wide font-mono">STEALTH HUD</span>
-          </div>
-
-          {/* STT Status Indicator */}
-          {isAudioCapturing && (
-            <div className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-medium ${
-              sttStatus === 'connected'
-                ? 'bg-emerald-950/70 border border-emerald-500/30 text-emerald-300'
-                : sttStatus === 'connecting'
-                ? 'bg-amber-950/70 border border-amber-500/30 text-amber-300 animate-pulse'
-                : 'bg-rose-950/70 border border-rose-500/30 text-rose-300'
-            }`}>
-              <span className={`w-1.5 h-1.5 rounded-full ${
-                sttStatus === 'connected' ? 'bg-emerald-400 animate-pulse' : sttStatus === 'connecting' ? 'bg-amber-400' : 'bg-rose-400'
-              }`} />
-              <span className="font-mono uppercase">{settings.sttProvider || 'assemblyai'}</span>
-            </div>
-          )}
-
-          {/* Instant 1-Click Language Mode Selector (EN / HI / Hinglish) */}
-          <div className="no-drag flex items-center bg-black/60 p-0.5 rounded-lg border border-white/10 text-[10px] font-medium shadow-inner">
-            <span className="flex items-center gap-1 pl-1.5 pr-1 text-slate-400">
-              <Languages className="w-3 h-3 text-blue-400" />
+          <button
+            onClick={() => setIsSettingsOpen(true)}
+            className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-slate-800/80 hover:bg-slate-700/80 border border-slate-700/60 text-slate-300 hover:text-white transition-all max-w-[260px] truncate"
+            title={sessionConfig ? 'Active Interview Session: Click to view settings' : 'Click to edit active persona & interview context'}
+          >
+            <Briefcase className="w-3 h-3 text-cyan-400 shrink-0" />
+            <span className="text-[11px] font-medium truncate">
+              {sessionConfig
+                ? `${sessionConfig.companyName ? sessionConfig.companyName + ' · ' : ''}${sessionConfig.jobTitle}`
+                : `${persona.targetCompany ? persona.targetCompany + ' · ' : ''}${persona.title}`}
             </span>
-            <button
-              type="button"
-              onClick={() => onUpdateSettings({ ...settings, language: 'en' })}
-              title="English Mode: Transcribe pure English. Disables Hinglish word conversion."
-              className={`px-1.5 py-0.5 rounded transition-all cursor-pointer ${
-                (settings.language || 'en') === 'en'
-                  ? 'bg-blue-600 text-white font-semibold shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'
-              }`}
-            >
-              EN
-            </button>
-            <button
-              type="button"
-              onClick={() => onUpdateSettings({ ...settings, language: 'hi' })}
-              title="Hindi Mode (हिंदी): Transcribe Hindi speech accurately."
-              className={`px-1.5 py-0.5 rounded transition-all cursor-pointer ${
-                settings.language === 'hi'
-                  ? 'bg-amber-600 text-white font-semibold shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'
-              }`}
-            >
-              HI
-            </button>
-            <button
-              type="button"
-              onClick={() => onUpdateSettings({ ...settings, language: 'hinglish' })}
-              title="Hinglish Mode: Mixed Hindi + English bilingual speech."
-              className={`px-1.5 py-0.5 rounded transition-all cursor-pointer ${
-                settings.language === 'hinglish'
-                  ? 'bg-purple-600 text-white font-semibold shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'
-              }`}
-            >
-              Hinglish
-            </button>
-          </div>
-
-          {/* Android Senior Role Badge */}
-          <div className="hidden lg:flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-950/70 border border-emerald-500/30 text-[10px] font-medium text-emerald-300">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
-            <span>Android · Kotlin (5 YOE)</span>
-          </div>
-
-          {/* Click-Through Status Indicator */}
-          {isClickThrough && (
-            <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-950/80 border border-amber-500/40 text-[10px] font-medium text-amber-300 animate-pulse">
-              <MousePointer className="w-2.5 h-2.5" />
-              <span>PASS-THROUGH (Ctrl+Shift+X)</span>
-            </div>
-          )}
-
-          {/* Enter Mode Indicator */}
-          {enterModeEnabled && (
-            <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-950/80 border border-blue-500/40 text-[10px] font-medium text-blue-300 animate-pulse">
-              <span>↵</span>
-              <span>Press Enter to generate</span>
-            </div>
-          )}
+          </button>
         </div>
 
-        {/* Center: Audio VU Monitor */}
-        <AudioVisualizer
-          levels={audioLevels}
-          isMicMuted={isMicMuted}
-          isSpeakerMuted={isSpeakerMuted}
-          onToggleMicMute={onToggleMicMute}
-          onToggleSpeakerMute={onToggleSpeakerMute}
-        />
+        {/* Center: Audio Levels & Engine Status */}
+        <div className="flex items-center gap-3 px-2" style={{ WebkitAppRegion: 'no-drag' } as any}>
+          <AudioVisualizer
+            levels={audioLevels}
+            isMicMuted={isMicMuted}
+            isSpeakerMuted={isSpeakerMuted}
+            onToggleMicMute={onToggleMicMute}
+            onToggleSpeakerMute={onToggleSpeakerMute}
+          />
+          <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800/80 text-slate-400 font-mono border border-slate-700/50">
+            {settings.sttProvider === 'groq' ? 'Whisper L3' : 'Gemini 2.0'}
+          </span>
+        </div>
 
-        {/* Right Side: Window & Utility Controls (NO-DRAG) */}
-        <div className="no-drag flex items-center gap-1 relative z-50">
-          {/* Quick Click-Through Toggle */}
+        {/* Right: Quick Action Controls */}
+        <div className="flex items-center gap-1 shrink-0" style={{ WebkitAppRegion: 'no-drag' } as any}>
+          {/* Screen OCR Scan */}
           <button
-            type="button"
-            onClick={handleToggleClickThrough}
-            title={isClickThrough ? "Disable Click-Through (Ctrl+Shift+X)" : "Enable Click-Through (clicks pass beneath window)"}
-            className={`no-drag p-1.5 rounded transition-colors cursor-pointer ${
-              isClickThrough ? 'bg-amber-500/20 text-amber-300' : 'text-slate-400 hover:text-white hover:bg-white/5'
-            }`}
+            onClick={onCaptureScreen}
+            className="p-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 transition-all flex items-center gap-1 text-[11px] font-medium"
+            title="Scan Screen & Solve Coding Problem (Alt+S)"
           >
-            <MousePointer className="w-3.5 h-3.5 pointer-events-none" />
+            <Camera className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Scan</span>
           </button>
 
-          {/* Compact View Toggle */}
+          {/* Mobile Remote */}
           <button
-            type="button"
-            onClick={() => setIsCompactMode(!isCompactMode)}
-            title={isCompactMode ? "Standard View" : "Compact Answers-Only View"}
-            className="no-drag p-1.5 text-slate-400 hover:text-white hover:bg-white/5 rounded transition-colors cursor-pointer"
-          >
-            {isCompactMode ? <Maximize2 className="w-3.5 h-3.5 pointer-events-none" /> : <Minimize2 className="w-3.5 h-3.5 pointer-events-none" />}
-          </button>
-
-          {/* Dynamic Auto-Expand Window Height Toggle */}
-          <button
-            type="button"
-            onClick={() => {
-              const next = !autoExpand;
-              onUpdateSettings({ ...settings, autoExpandWindow: next });
-              if (!next) {
-                lastTargetHeightRef.current = BASE_WINDOW_HEIGHT;
-                window.electronAPI?.setWindowHeight?.(BASE_WINDOW_HEIGHT);
-              }
-            }}
-            title={
-              autoExpand
-                ? "Dynamic Auto-Expand is ACTIVE: Window automatically expands downwards for longer answers. Click to lock fixed height."
-                : "Dynamic Auto-Expand is OFF: Window height is fixed. Click to enable automatic expansion."
-            }
-            className={`no-drag p-1.5 rounded transition-colors cursor-pointer ${
-              autoExpand ? 'bg-amber-500/20 text-amber-300' : 'text-slate-400 hover:text-white hover:bg-white/5'
-            }`}
-          >
-            <ChevronsUpDown className="w-3.5 h-3.5 pointer-events-none" />
-          </button>
-
-          {/* Q&A Session Logs */}
-          <button
-            type="button"
-            onClick={() => setIsLogsOpen(true)}
-            title="View Transcript & Q&A Generation Logs"
-            className="no-drag flex items-center gap-1 p-1.5 text-slate-400 hover:text-white hover:bg-white/5 rounded transition-colors cursor-pointer text-xs"
-          >
-            <FileText className="w-3.5 h-3.5 text-blue-400 pointer-events-none" />
-            {qaCount > 0 && (
-              <span className="px-1 py-0.2 rounded-full bg-blue-600 text-white text-[9px] font-mono leading-none">
-                {qaCount}
-              </span>
-            )}
-          </button>
-
-          {/* Mobile Remote Controller */}
-          <button
-            type="button"
             onClick={() => setIsMobileModalOpen(true)}
-            title="Mobile Remote Controller (Control HUD from your phone)"
-            className="no-drag p-1.5 text-slate-400 hover:text-emerald-300 hover:bg-emerald-500/10 rounded transition-colors cursor-pointer"
+            className="p-1.5 rounded-lg text-slate-400 hover:text-cyan-300 hover:bg-slate-800/70 transition-colors"
+            title="Open Mobile Remote QR Code"
           >
-            <Smartphone className="w-3.5 h-3.5 pointer-events-none" />
+            <Smartphone className="w-3.5 h-3.5" />
           </button>
+
+          {/* Session Q&A Logs */}
+          <button
+            onClick={() => setIsLogsOpen(true)}
+            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800/70 transition-colors"
+            title="View Interview Q&A Session Logs"
+          >
+            <FileText className="w-3.5 h-3.5" />
+          </button>
+
+          {/* New / Reconfigure Session */}
+          {onEndSession && (
+            <button
+              onClick={onEndSession}
+              className="p-1.5 rounded-lg text-slate-400 hover:text-cyan-300 hover:bg-slate-800/70 transition-colors flex items-center gap-1"
+              title="Return to Interview Setup Wizard"
+            >
+              <RotateCcw className="w-3.5 h-3.5 text-cyan-400" />
+            </button>
+          )}
 
           {/* Settings */}
           <button
-            type="button"
             onClick={() => setIsSettingsOpen(true)}
-            title="Copilot Settings & API Keys"
-            className="no-drag p-1.5 text-slate-400 hover:text-white hover:bg-white/5 rounded transition-colors cursor-pointer"
+            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800/70 transition-colors"
+            title="Settings"
           >
-            <Settings className="w-3.5 h-3.5 pointer-events-none" />
+            <Settings className="w-3.5 h-3.5" />
           </button>
 
-          {/* Minimize / Collapse to Mini Floating Icon */}
+          <div className="h-4 w-px bg-slate-800 mx-1" />
+
+          {/* Click-Through Toggle */}
           <button
-            type="button"
-            onClick={handleMinimize}
-            title="Collapse to small floating icon (or Ctrl+Shift+H to hide completely)"
-            className="no-drag p-1.5 text-slate-400 hover:text-blue-300 hover:bg-white/5 rounded transition-colors cursor-pointer"
+            onClick={onToggleClickThrough}
+            className={`p-1.5 rounded-lg transition-colors ${
+              isClickThrough ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/40' : 'text-slate-400 hover:text-white hover:bg-slate-800'
+            }`}
+            title="Toggle Click-Through Mode (Cmd+Shift+X)"
           >
-            <EyeOff className="w-3.5 h-3.5 pointer-events-none" />
+            <MousePointer className="w-3.5 h-3.5" />
+          </button>
+
+          {/* Mini Mode */}
+          <button
+            onClick={onToggleMiniMode}
+            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+            title="Collapse to Mini Widget (Cmd+Shift+M)"
+          >
+            <Minimize2 className="w-3.5 h-3.5" />
+          </button>
+
+          {/* Stealth Panic Hide */}
+          <button
+            onClick={onToggleStealth}
+            className="p-1.5 rounded-lg text-slate-400 hover:text-amber-400 hover:bg-slate-800 transition-colors"
+            title="Panic Hide HUD (Cmd+Shift+H)"
+          >
+            <EyeOff className="w-3.5 h-3.5" />
           </button>
 
           {/* Close Window */}
           <button
-            type="button"
-            onClick={handleClose}
-            title="Close Copilot"
-            className="no-drag p-1.5 text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 rounded transition-colors cursor-pointer"
+            onClick={() => window.electronAPI?.closeWindow?.()}
+            className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-slate-800 transition-colors"
+            title="Quit Application"
           >
-            <X className="w-3.5 h-3.5 pointer-events-none" />
+            <X className="w-3.5 h-3.5" />
           </button>
         </div>
       </div>
 
-      {/* ================= MAIN CONTENT SPLIT (DYNAMICALLY ADAPTIVE) ================= */}
+      {/* ── MAIN CONTENT AREA (SPLIT: TRANSCRIPTS & ANSWERS) ────────────────── */}
       <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
-        {/* Top Half: Real-time Transcript Feed (Contracts when answer is active to prioritize answer space) */}
-        {!isCompactMode && (
-          <div
-            className={`transition-all duration-200 overflow-hidden ${
-              suggestion || isGenerating
-                ? transcripts.length === 0
-                  ? 'h-[36px] flex-none'
-                  : 'max-h-[120px] flex-[2.5] min-h-[64px]'
-                : 'flex-[4] min-h-[110px]'
-            }`}
-          >
-            <TranscriptFeed
-              transcripts={transcripts}
-              interimText={interimText}
-              onClear={onClearTranscripts}
-              fontSize={settings.fontSize}
-              isAudioCapturing={isAudioCapturing}
-              onStartAudio={onStartAudio}
-              audioLevels={audioLevels}
-              sttStatus={sttStatus}
-              sttProvider={settings.sttProvider || 'assemblyai'}
-              onSimulateQuestion={onSimulateQuestion}
-            />
-          </div>
-        )}
-
-        {/* Bottom Half: Real-time AI Suggested Answers (Dynamic Auto-Expanding) */}
-        <div className="flex-1 min-h-[160px] overflow-hidden flex flex-col">
+        {/* Answer Streaming Panel */}
+        <div className="flex-1 flex flex-col min-h-[160px] overflow-hidden">
           <AnswerPanel
             suggestion={suggestion}
             isGenerating={isGenerating}
@@ -463,111 +254,74 @@ export const HUDOverlay: React.FC<HUDOverlayProps> = ({
             onStop={onStopGenerating}
             onTogglePin={onTogglePinAnswer}
             fontSize={settings.fontSize}
-            onContentHeightChange={handleContentHeightChange}
+            activePersona={persona}
           />
         </div>
-      </div>
 
-      {/* ================= BOTTOM ACTION TOOLBAR (NO-DRAG) ================= */}
-      <div className="no-drag flex items-center justify-between px-3 py-2 bg-slate-950/90 border-t border-white/10 text-xs">
-        {/* Left: Audio Capture Toggle */}
-        <div className="flex items-center gap-2">
-          <button
-            onClick={isAudioCapturing ? onStopAudio : onStartAudio}
-            className={`flex items-center gap-1.5 px-3 py-1 rounded-md font-medium transition-all text-xs ${
-              isAudioCapturing
-                ? 'bg-emerald-950/80 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-900/80'
-                : 'bg-slate-800 text-slate-300 border border-white/5 hover:bg-slate-700'
-            }`}
-          >
-            {isAudioCapturing ? (
-              <>
-                <Square className="w-3 h-3 fill-current text-emerald-400" />
-                <span>Capturing Audio</span>
-              </>
-            ) : (
-              <>
-                <Play className="w-3 h-3 fill-current text-blue-400" />
-                <span>Start Audio Capture</span>
-              </>
-            )}
-          </button>
-        </div>
-
-        {/* Center: Screen Vision Scan */}
-        <div className="flex items-center gap-2">
-          <button
-            onClick={onCaptureScreen}
-            disabled={isGenerating}
-            title="Scan screen or Meet chat for question (Google Meet chat, CoderPad, LeetCode) - Shortcut: Alt+S"
-            className="flex items-center gap-1.5 px-3 py-1 rounded-md bg-amber-950/80 hover:bg-amber-900/90 border border-amber-500/40 text-amber-300 font-medium transition-all text-xs disabled:opacity-40"
-          >
-            <Camera className="w-3.5 h-3.5 text-amber-400" />
-            <span>Scan Screen</span>
-            <span className="text-[10px] text-amber-400/70 font-mono bg-amber-900/40 px-1 py-0.2 rounded border border-amber-500/20">Alt+S</span>
-          </button>
-        </div>
-
-        {/* Right: Mode Toggle + Generate Button */}
-        <div className="flex items-center gap-1.5">
-          {/* Auto / Enter Mode Toggle */}
-          <div className="flex items-center rounded-md border border-white/10 overflow-hidden text-[11px] font-medium">
-            <button
-              onClick={() => !enterModeEnabled && onToggleEnterMode?.()}
-              title="Auto Mode: Answer generates automatically when a question is detected (silence-based)"
-              className={`px-2.5 py-1 transition-colors ${
-                !enterModeEnabled
-                  ? 'bg-violet-600 text-white'
-                  : 'bg-slate-800/80 text-slate-400 hover:text-slate-200 hover:bg-slate-700/80'
-              }`}
-            >
-              ⚡ Auto
-            </button>
-            <button
-              onClick={() => enterModeEnabled && onToggleEnterMode?.()}
-              title="Enter Mode: App listens to full question, then press Enter to generate answer"
-              className={`px-2.5 py-1 transition-colors ${
-                enterModeEnabled
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-slate-800/80 text-slate-400 hover:text-slate-200 hover:bg-slate-700/80'
-              }`}
-            >
-              ↵ Enter
-            </button>
+        {/* Live Turn-by-Turn Speech Subtitles */}
+        <div className="h-44 border-t border-slate-800/80 bg-slate-950/60 flex flex-col overflow-hidden">
+          <div className="flex items-center justify-between px-3 py-1.5 bg-slate-900/60 border-b border-slate-800/60 text-[11px] text-slate-400">
+            <span className="font-semibold text-slate-300 flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              Live Conversation Feed
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={onToggleMicMute}
+                className={`p-1 rounded transition-colors ${
+                  isMicMuted ? 'text-rose-400 bg-rose-950/50' : 'text-slate-400 hover:text-slate-200'
+                }`}
+                title={isMicMuted ? 'Unmute Microphone' : 'Mute Microphone'}
+              >
+                {isMicMuted ? <MicOff className="w-3 h-3" /> : <Mic className="w-3 h-3" />}
+              </button>
+              <button
+                onClick={onToggleSpeakerMute}
+                className={`p-1 rounded transition-colors ${
+                  isSpeakerMuted ? 'text-rose-400 bg-rose-950/50' : 'text-slate-400 hover:text-slate-200'
+                }`}
+                title={isSpeakerMuted ? 'Unmute Speaker Loopback' : 'Mute Speaker Loopback'}
+              >
+                {isSpeakerMuted ? <VolumeX className="w-3 h-3" /> : <Volume2 className="w-3 h-3" />}
+              </button>
+              <button
+                onClick={onClearTranscripts}
+                className="p-1 rounded text-slate-400 hover:text-rose-300 hover:bg-slate-800 transition-colors"
+                title="Clear Transcripts"
+              >
+                <Trash2 className="w-3 h-3" />
+              </button>
+            </div>
           </div>
 
-          {/* Generate / Manual Trigger Button */}
-          <button
-            onClick={onGenerateManualAnswer}
-            disabled={isGenerating}
-            title={enterModeEnabled ? "Generate answer (or press Enter key)" : "Manually generate answer from last transcript"}
-            className="flex items-center gap-1.5 px-3 py-1 rounded-md bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-medium shadow-sm transition-all text-xs"
-          >
-            <Sparkles className="w-3.5 h-3.5" />
-            <span>{enterModeEnabled ? 'Generate (Enter)' : 'Generate'}</span>
-          </button>
+          <div className="flex-1 overflow-hidden">
+            <TranscriptFeed
+              transcripts={transcripts}
+              interimText={interimText}
+              onClear={onClearTranscripts}
+              fontSize={settings.fontSize}
+            />
+          </div>
         </div>
       </div>
 
-      {/* Settings Modal */}
+      {/* ── MODALS ───────────────────────────────────────────────────────────── */}
       <SettingsModal
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
         settings={settings}
-        onSave={onUpdateSettings}
+        onUpdateSettings={onUpdateSettings}
+        onSelectPersona={onSelectPersona}
+        configStatus={configStatus}
+        onSaveEnvKeys={onSaveEnvKeys}
+        audioDevices={audioDevices}
+        loopbackSources={loopbackSources}
+        audioLevels={audioLevels}
       />
 
-      {/* Transcript & Q&A Session Logs Modal */}
-      <QALogModal
-        isOpen={isLogsOpen}
-        onClose={() => setIsLogsOpen(false)}
-      />
+      <QALogModal isOpen={isLogsOpen} onClose={() => setIsLogsOpen(false)} />
 
-      {/* Mobile Remote Controller Modal */}
-      <MobileRemoteModal
-        isOpen={isMobileModalOpen}
-        onClose={() => setIsMobileModalOpen(false)}
-      />
+      <MobileRemoteModal isOpen={isMobileModalOpen} onClose={() => setIsMobileModalOpen(false)} />
     </div>
   );
 };

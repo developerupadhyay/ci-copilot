@@ -10,7 +10,7 @@ class QALogger {
 
   private loadHistory() {
     try {
-      const saved = localStorage.getItem('prateek_interview_qa_logs');
+      const saved = localStorage.getItem('ci_interview_qa_logs');
       if (saved) {
         this.history = JSON.parse(saved);
       }
@@ -21,7 +21,7 @@ class QALogger {
 
   private saveHistory() {
     try {
-      localStorage.setItem('prateek_interview_qa_logs', JSON.stringify(this.history.slice(-100)));
+      localStorage.setItem('ci_interview_qa_logs', JSON.stringify(this.history.slice(-100)));
     } catch {}
     this.notify();
   }

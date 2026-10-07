@@ -184,11 +184,11 @@ export function startMobileServer(options: MobileServerOptions): Promise<MobileS
         return;
       }
 
-      // ── 6. Download Native Android App APK (GET /download or /PrateekRemote.apk) ───
-      if (pathname === '/download' || pathname === '/PrateekRemote.apk' || pathname === '/app-debug.apk') {
+      // ── 6. Download Native Android App APK (GET /download or /CIRemote.apk) ───
+      if (pathname === '/download' || pathname === '/CIRemote.apk' || pathname === '/app-debug.apk') {
         const potentialPaths = [
-          path.join(process.cwd(), 'release', 'PrateekRemote.apk'),
-          path.join(process.cwd(), 'android-app', 'PrateekRemote.apk'),
+          path.join(process.cwd(), 'release', 'CIRemote.apk'),
+          path.join(process.cwd(), 'android-app', 'CIRemote.apk'),
           path.join(process.cwd(), 'android-app', 'app', 'build', 'outputs', 'apk', 'debug', 'app-debug.apk')
         ];
         const apkPath = potentialPaths.find(p => fs.existsSync(p));
@@ -197,7 +197,7 @@ export function startMobileServer(options: MobileServerOptions): Promise<MobileS
           res.writeHead(200, {
             'Content-Type': 'application/vnd.android.package-archive',
             'Content-Length': stat.size,
-            'Content-Disposition': 'attachment; filename="PrateekRemote.apk"'
+            'Content-Disposition': 'attachment; filename="CIRemote.apk"'
           });
           fs.createReadStream(apkPath).pipe(res);
           return;
@@ -241,7 +241,7 @@ export function stopMobileServer() {
 
 function printStartupBanner(url: string) {
   console.log('\n\x1b[32m' + '═'.repeat(68) + '\x1b[0m');
-  console.log(' \x1b[1m\x1b[36m📱 PRATEEK COPILOT - MOBILE REMOTE CONTROLLER ACTIVE\x1b[0m');
+  console.log(' \x1b[1m\x1b[36m📱 CI COPILOT - MOBILE REMOTE CONTROLLER ACTIVE\x1b[0m');
   console.log('\x1b[32m' + '═'.repeat(68) + '\x1b[0m');
   console.log(' \x1b[1m👉 Open this link on your Mobile (Same Wi-Fi / Hotspot):\x1b[0m');
   console.log(`    \x1b[1m\x1b[33m${url}\x1b[0m\n`);
@@ -263,7 +263,7 @@ function getMobileHTML(): string {
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="theme-color" content="#060709">
-  <title>Prateek AI - Stealth Mobile Remote</title>
+  <title>CI Copilot - Stealth Mobile Remote</title>
   <style>
     * {
       box-sizing: border-box;
@@ -677,7 +677,7 @@ function getMobileHTML(): string {
   <div class="header">
     <div class="brand">
       <span style="font-size: 18px;">⚡</span>
-      <span class="brand-title">Prateek AI Remote</span>
+      <span class="brand-title">CI Copilot Remote</span>
     </div>
     <div style="display: flex; align-items: center; gap: 6px;">
       <a href="/download" style="text-decoration: none; font-size: 10.5px; font-weight: 700; color: #38bdf8; background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.4); padding: 3px 8px; border-radius: 999px; display: flex; align-items: center; gap: 3px;">

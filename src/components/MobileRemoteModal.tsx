@@ -47,7 +47,7 @@ export const MobileRemoteModal: React.FC<MobileRemoteModalProps> = ({ isOpen, on
               <Smartphone className="w-4 h-4" />
             </div>
             <div>
-              <h2 className="text-sm font-bold text-white tracking-wide">Mobile Remote Controller</h2>
+              <h2 className="text-sm font-bold text-white tracking-wide">CI Copilot Mobile Remote</h2>
               <p className="text-[11px] text-slate-400">Control HUD & receive answers from your phone</p>
             </div>
           </div>
